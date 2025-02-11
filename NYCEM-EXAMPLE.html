@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>NYCEM COVID Data Check</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+
+<div id="chart"></div>
+
+<script>
+  const csvUrl = "https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/data-by-day.csv";
+
+  d3.csv(csvUrl).then(function(data) {
+    data.forEach(d => {
+      d.BK_CASE_COUNT = +d.BK_CASE_COUNT;
+      d.BK_HOSPITALIZED_COUNT = +d.BK_HOSPITALIZED_COUNT;
+      d.BK_DEATH_COUNT = +d.BK_DEATH_COUNT;
+      d.date_of_interest = d3.timeParse("%m/%d/%Y")(d.date_of_interest);
+    });
+
+    // get the last two entries
+    data.sort((a, b) => d3.descending(a.date_of_interest, b.date_of_interest));
+    const latest = data[0], previous = data[1];
+
+    // sanity check data in console
+    console.log("Latest Date:", latest.date_of_interest);
+
+    console.log("Previous Date:", previous.date_of_interest);
+
+    console.log("Latest Values:", {
+      BK_CASE_COUNT: latest.BK_CASE_COUNT,
+      BK_HOSPITALIZED_COUNT: latest.BK_HOSPITALIZED_COUNT,
+      BK_DEATH_COUNT: latest.BK_DEATH_COUNT
+    });
+    console.log("Previous Values:", {
+      BK_CASE_COUNT: previous.BK_CASE_COUNT,
+      BK_HOSPITALIZED_COUNT: previous.BK_HOSPITALIZED_COUNT,
+      BK_DEATH_COUNT: previous.BK_DEATH_COUNT
+    });
+
+    // % changes
+      const changes = [
+        {
+          metric: "BK_CASE_COUNT",
+          change: ((latest.BK_CASE_COUNT - previous.BK_CASE_COUNT) / previous.BK_CASE_COUNT) * 100
+        },
+        {
+          metric: "BK_HOSPITALIZED_COUNT",
+          change: ((latest.BK_HOSPITALIZED_COUNT - previous.BK_HOSPITALIZED_COUNT) / previous.BK_HOSPITALIZED_COUNT) * 100
+        },
+        {
+          metric: "BK_DEATH_COUNT",
+          change: previous.BK_DEATH_COUNT 
+      ? ((latest.BK_DEATH_COUNT - previous.BK_DEATH_COUNT) / previous.BK_DEATH_COUNT) * 100 
+      : 0
+        }
+      ];
+
+    console.log("Calculated Percentage Changes:", changes);
+
+    createBidirectionalBarChart(changes,latest,previous);
+    })
+    .catch(function(error) {
+    d3.select("#data-check").html(`<p style="color: red;">Error loading data: ${error}</p>`);
+
+    console.error("Error loading CSV:", error);
+
+  });
+
+
+  
+  function createBidirectionalBarChart(data,latest,previous) {
+    const margin = { top: 50, right: 40, bottom: 60, left: 350 },
+      width = 800 - margin.left - margin.right,
+      height = 400 - margin.top - margin.bottom;
+
+    const svg = d3.select("#chart").append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const tooltip = d3.select("body").append("div")
+        .attr("class", "tooltip")
+        .style("position", "absolute")
+        .style("background", "lightgray")
+        .style("padding", "5px")
+        .style("border-radius", "5px")
+        .style("visibility", "hidden");
+
+    // Scales
+    const y = d3.scaleBand()
+      .domain(data.map(d => d.metric))
+      .range([0, height])
+      .padding(0.4);
+
+    const x = d3.scaleLinear()
+      .domain([-100, 100])  
+      .range([0, width]);
+
+    //x  Axis (percentage change)
+    svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x).tickFormat(d => `${d}%`));
+
+    // y Axis (categories)
+    svg.append("g")
+      .attr("transform", `translate(${width / 2},0)`)  
+      .call(d3.axisLeft(y).tickSize(0))
+      .selectAll("text")
+      .style("text-anchor", "end")  
+      .attr("dx", `${-width / 2 - 100}`);  
+
+    // Bars
+    svg.selectAll(".bar")
+      .data(data)
+      .enter().append("rect")
+      .attr("class", "bar")
+      .attr("y", d => y(d.metric))
+      .attr("height", y.bandwidth())
+      .attr("x", d => d.change < 0 ? x(d.change) : x(0)) 
+      .attr("width", d => Math.abs(x(d.change) - x(0)))  
+      .attr("fill", d => d.change < 0 ? "lightcoral" : "skyblue")
+      .on("mouseover", function (event, d) {
+        
+            tooltip.style("visibility", "visible")
+                .text(`Most recent: ${latest[d.metric]}, Previous Day: ${previous[d.metric]}, Dif:${latest[d.metric] - previous[d.metric] },    ${d.change.toFixed(1)}%`);
+            d3.select(this).style("opacity", 0.7); 
+        })
+        .on("mousemove", function (event) {
+            tooltip.style("top", (event.pageY - 10) + "px")
+                .style("left", (event.pageX + 10) + "px");
+        })
+        .on("mouseout", function () {
+            tooltip.style("visibility", "hidden");
+            d3.select(this).style("opacity", 1);
+        });
+
+    // Labels
+    svg.selectAll(".label")
+      .data(data)
+      .enter().append("text")
+      .attr("class", "label")
+      .attr("x", d => x(d.change) + (d.change < 0 ? -5 : 5))
+      .attr("y", d => y(d.metric) + y.bandwidth() / 2)
+      .attr("dy", ".35em")
+      .style("text-anchor", d => d.change < 0 ? "end" : "start")
+      .style("fill", "black")
+      .text(d => `${d.change.toFixed(1)}%`);
+
+    // Title
+    svg.append("text")
+      .attr("x", width / 2)
+      .attr("y", -10)
+      .attr("text-anchor", "middle")
+      .style("font-size", "16px")
+      .html('Data from <a href="https://raw.githubusercontent.com/nychealth/coronavirus-data/master/trends/data-by-day.csv" target="_blank">DOH Data</a>');
+      svg.append("text")
+      .attr("x", width / 2)
+      .attr("y", -25)
+      .attr("text-anchor", "middle")
+      .style("font-size", "16px")
+      .text("Percentage Change in Brooklyn COVID Metrics (Last 2 Days)");
+
+    // Legend
+    const legend = svg.append("g")
+      .attr("transform", `translate(${width - 50}, 20)`);
+
+    legend.append("rect")
+      .attr("width", 20)
+      .attr("height", 20)
+      .attr("fill", "skyblue");
+
+    legend.append("text")
+      .attr("x", 25)
+      .attr("y", 15)
+      .text("Increase");
+
+    legend.append("rect")
+      .attr("y", 30)
+      .attr("width", 20)
+      .attr("height", 20)
+      .attr("fill", "lightcoral");
+
+    legend.append("text")
+      .attr("x", 25)
+      .attr("y", 45)
+      .text("Decrease");
+  }
+</script>
+
+</body>
+</html>
